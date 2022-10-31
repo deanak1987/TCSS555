@@ -1,10 +1,11 @@
 # Homework 2
-# name: Martine De Cock
+# Name: Dean Kelley
+# Professor: Martine De Cock
 # description: Training and testing decision trees with discrete-values attributes
 
-import sys
 import math
 import pandas as pd
+
 
 class DecisionNode:
 
@@ -15,8 +16,8 @@ class DecisionNode:
         self.children = {}
 
     # Visualizes the tree
-    def display(self, level = 0):
-        if self.children == {}: # reached leaf level
+    def display(self, level=0):
+        if self.children == {}:  # reached leaf level
             print(": ", self.attribute, end="")
         else:
             for value in self.children.keys():
@@ -26,7 +27,7 @@ class DecisionNode:
 
     # Predicts the target label for instance x
     def predicts(self, x):
-        if self.children == {}: # reached leaf level
+        if self.children == {}:  # reached leaf level
             return self.attribute
         value = x[self.attribute]
         subtree = self.children[value]
@@ -43,28 +44,33 @@ def funTree():
     myTree.children['strong'] = DecisionNode('no')
     return myTree
 
+
+# Calculates entropy from yes/no counts
 def entropy(y, n):
     s = n + y
     if y == 0:
-        ylog = 0
+        y_log = 0
     else:
-        ylog = y / s * math.log2(y / s)
+        y_log = y / s * math.log2(y / s)
     if n == 0:
-        nlog = 0
+        n_log = 0
     else:
-         nlog = n / s * math.log2(n / s)
-    ent = -(ylog + nlog)
+        n_log = n / s * math.log2(n / s)
+    ent = -(y_log + n_log)
     return ent
 
 
-
-def gain_calc(group, target, ent_prior, s_tot, flag):
-    if flag == 0:
-        counts = group.value_counts()
-        counts = counts.to_frame(name='count').reset_index()
-        counts = counts.pivot_table(index=str(target), columns=counts.columns[0], values='count').fillna(0)
+# group is examples to calculate gain from
+# target is target attribute
+# ent_prior is branch entropy
+# s_tot is sample size of group
+# flag is a boolean value to tell program if it's calculating entire sample or branch sample
+def gain_calc(group, goal, ent_prior, s_tot, flag):
+    counts = group
+    if flag:  # Information gain of attribute from total example sample
+        counts = counts.value_counts().to_frame(name='count').reset_index()
+        counts = counts.pivot_table(index=str(goal), columns=counts.columns[0], values='count').fillna(0)
         ent = 0
-        ent_branch = 0
         for column in counts:
             n = counts[column].values[0]
             y = counts[column].values[1]
@@ -73,96 +79,103 @@ def gain_calc(group, target, ent_prior, s_tot, flag):
             ent = ent + ent_branch
 
         gain = ent_prior - ent
-    else:
-        # DEVICE WAY FOR GAIN CALCULATION FOR BRANCH ITEMS
-        gain = 1
+    else:  # Information gain of attribute from branch condition
+        counts = counts.pivot_table(index=str(goal), columns=counts.columns[0], values='count').fillna(0)
+        ent = 0
+        ent_branch = 0
+        for column in counts:
+            n = counts[column].values[0]
+            y = counts[column].values[1]
+            s = y + n
+            ent_branch = s / s_tot * entropy(y, n)
+            ent = ent + ent_branch
+        gain = ent_prior - ent
     return gain
 
-def MyTree(examples,attributes,  branch, target):
+
+def tree_builder(examples, attributes, branch, goal):
+    conditions = attributes
     my_tree = DecisionNode(str(branch))
-    branch_bool = examples.groupby([str(branch)])[str(target)].value_counts().to_frame(name='count').reset_index()
-    branch_bool = branch_bool.pivot_table(index=str(target), columns=branch_bool.columns[0], values='count').fillna(0)
-    df_ent = pd.DataFrame()
+    branch_bool = examples.groupby([str(branch)])[str(goal)].value_counts().to_frame(name='count').reset_index()
+    branch_bool = branch_bool.pivot_table(index=str(goal), columns=branch_bool.columns[0], values='count').fillna(0)
     # calculate branch entropy
-    i = 0
-    new_branch = []
-    for column in branch_bool:
+    new_branch = ''
+    for column in branch_bool:  # Determine next branch
         n = branch_bool[column].values[0]
         y = branch_bool[column].values[1]
-        ent = entropy(y,n)
-        if ent == 0:
+        ent = entropy(y, n)
+        if ent == 0 or len(conditions) == 0:  # Makes a decision
             leaf = ''
             if y > n:
                 leaf = 'yes'
             else:
                 leaf = 'no'
-            my_tree.children[str(column)] = DecisionNode(leaf)
-            branch_bool = branch_bool.drop(str(column), axis=1)
-        else:
-            df_ent[str(column)] = [ent]
-            i += 1
-    group1 = pd.DataFrame()
-    for e in df_ent:
-        gain = 0
-        for name in attributes:
-            branch_group = examples.groupby([str(branch), str(name)])[str(target)].value_counts().to_frame(name='count').reset_index()
+            my_tree.children[column] = DecisionNode(leaf)
+        else:  # Needs more info
+            max_gain = 0
+            for name in conditions:
+                branch_group = examples.groupby([str(branch), str(name)])[str(goal)].value_counts().to_frame(
+                    name='count').reset_index()
+                branch_group = branch_group.astype({str(branch): 'string'})
+                branch_group = branch_group[branch_group[str(branch)].str.contains(str(column)) == True]
+                branch_group = branch_group.drop(str(branch), axis=1)
+                s_tot = branch_group['count'].sum()
+                gain = gain_calc(branch_group, goal, ent, s_tot, False)
+                if gain >= max_gain:
+                    new_branch = name
+                    max_gain = gain
+            if len(conditions) != 0:
+                conditions.remove(str(new_branch))
+                next_branch = tree_builder(examples, conditions, new_branch, goal)
+                my_tree.children[column] = next_branch
+    return my_tree
 
-            group1 = branch_group[branch_group[str(branch)] == e]
-            group1 = group1.groupby([str(target)])['count'].sum()
-            y = group1.values[0]
-            s_tot = group1.sum(axis = 0)
-            ent_prior = df_ent.iloc[0][str(e)]
-            temp = gain_calc(group1, target, ent_prior, s_tot, 1)
-            if temp > gain:
-                gain = temp
-    # DEVICE WAY FOR GAIN CALCULATION FOR BRANCH ITEMS
-    x
-    return gain
 
-# Begin IDS algorithm
-def id3(examples, target, attributes):
-    col_names = attributes
-    target_data = examples[str(target)].value_counts()
-    target_data = target_data.to_frame(name='count').reset_index()
-    target_data = target_data.pivot_table(index=str(target), columns=target_data.columns[0], values='count').fillna(0)
-    n = target_data.iloc[0,0]
-    y = target_data.iloc[1,0]
+# Begin ID3 algorithm
+def id3(examples, goal, attributes):
+    conditions = attributes
+    target_data = examples[str(goal)].value_counts().to_frame(name='count').reset_index()
+    target_data = target_data.pivot_table(index=str(goal), columns=target_data.columns[0], values='count').fillna(0)
+    n = target_data.iloc[0, 0]
+    y = target_data.iloc[1, 0]
     # Calculate sample entropy
-    sample_ent = entropy(y,n)
-
+    sample_ent = entropy(y, n)
     # Determine the highest information gain (IG)
     best_attribute = ''
     high_gain = 0
-    for name in col_names:
-        list_branch = examples.groupby([str(name)])[str(target)]
-        gain = gain_calc(list_branch, target, sample_ent, examples.shape[0], 0)
+    for name in conditions:
+        list_branch = examples.groupby([str(name)])[str(goal)]
+        gain = gain_calc(list_branch, goal, sample_ent, examples.shape[0], True)
         if gain > high_gain:
             best_attribute = name
             high_gain = gain
-    # col_names = col_names.remove(str(best_attribute))
-    col_names.remove(best_attribute)
+    conditions.remove(best_attribute)
     # Establish root of tree with the highest IG
-    tree = MyTree(examples, col_names, best_attribute, target)
-    return tree
+    my_tree = tree_builder(examples, conditions, best_attribute, goal)
+    return my_tree
 
 
 ####################   MAIN PROGRAM ######################
 
 # Reading input data
-train = pd.read_csv('playtennis_train.csv')
-test = pd.read_csv('playtennis_test.csv')
-target = 'playtennis'
-attributes = train.columns.tolist()
-attributes.remove(target)
+choose = 'r'
+if choose == 'p':
+    train = pd.read_csv('playtennis_train.csv')
+    test = pd.read_csv('playtennis_test.csv')
+    target = 'playtennis'
+else:
+    train = pd.read_csv('republican_train.csv')
+    test = pd.read_csv('republican_test.csv')
+    target = 'republican'
+my_attributes = train.columns.tolist()
+my_attributes.remove(target)
 
 # Learning and visualizing the tree
-tree = id3(train,target,attributes)
-# tree.display()
-print(tree)
-
-# # Evaluating the tree on the test data
-# correct = 0
-# for i in range(0,len(test)):
-#     if str(tree.predicts(test.loc[i])) == str(test.loc[i,target]):
-#         correct += 1
-# print("\nThe accuracy is: ", correct/len(test))
+tree = id3(train, target, my_attributes)
+tree.display()
+# Evaluating the tree on the test data
+correct = 0
+for i in range(0, len(test)):
+    if str(tree.predicts(test.loc[i])) == str(test.loc[i, target]):
+        correct += 1
+print("\nThe accuracy is: ", correct / len(test))
