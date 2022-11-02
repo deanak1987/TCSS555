@@ -69,7 +69,7 @@ def gain_calc(group, goal, ent_prior, s_tot, flag):
     counts = group
     if flag:  # Information gain of attribute from total example sample
         counts = counts.value_counts().to_frame(name='count').reset_index()
-        counts = counts.pivot_table(index=str(goal), columns=counts.columns[0], values='count').fillna(0)
+        counts = counts.pivot_table(index=goal, columns=counts.columns[0], values='count').fillna(0)
         ent = 0
         for column in counts:
             n = counts[column].values[0]
@@ -80,7 +80,7 @@ def gain_calc(group, goal, ent_prior, s_tot, flag):
 
         gain = ent_prior - ent
     else:  # Information gain of attribute from branch condition
-        counts = counts.pivot_table(index=str(goal), columns=counts.columns[0], values='count').fillna(0)
+        counts = counts.pivot_table(index=goal, columns=counts.columns[0], values='count').fillna(0)
         ent = 0
         ent_branch = 0
         for column in counts:
@@ -93,11 +93,13 @@ def gain_calc(group, goal, ent_prior, s_tot, flag):
     return gain
 
 
-def tree_builder(examples, conditions, branch, goal):
-    my_tree = DecisionNode(str(branch))
-    branch_bool = examples.groupby([str(branch)])[str(goal)].value_counts().to_frame(name='count').reset_index()
-    branch_bool = branch_bool.pivot_table(index=str(goal), columns=branch_bool.columns[0], values='count').fillna(0)
-    # calculate branch entropy
+def tree_builder(examples, attributes, branch, goal):
+    conditions = attributes
+    my_tree = DecisionNode(branch)
+    branch_bool = examples.groupby([branch])[goal].value_counts().to_frame(name='count').reset_index()
+    branch_bool = branch_bool.pivot_table(index=goal, columns=branch_bool.columns[0], values='count').fillna(0)
+    yes_no=branch_bool.axes[0].tolist() # Get yes/no values
+    # Calculate branch entropy then calculate max gain to determine next branch
     new_branch = ''
     for column in branch_bool:  # Determine next branch
         n = branch_bool[column].values[0]
@@ -106,34 +108,38 @@ def tree_builder(examples, conditions, branch, goal):
         if ent == 0 or len(conditions) == 0:  # Makes a decision
             leaf = ''
             if y > n:
-                leaf = 'yes'
+                leaf = yes_no[1]
             else:
-                leaf = 'no'
+                leaf = yes_no[0]
             my_tree.children[column] = DecisionNode(leaf)
         else:  # Needs more info
             max_gain = 0
             for name in conditions:
-                branch_group = examples.groupby([str(branch), str(name)])[str(goal)].value_counts().to_frame(
+                branch_group = examples.groupby([branch, name])[goal].value_counts().to_frame(
                     name='count').reset_index()
-                branch_group = branch_group.astype({str(branch): 'string'})
-                branch_group = branch_group[branch_group[str(branch)].str.contains(str(column)) == True]
-                branch_group = branch_group.drop(str(branch), axis=1)
+                branch_group = branch_group.astype({branch: 'string'})
+                branch_group = branch_group[branch_group[branch].str.contains(str(column)) == True]
+                branch_group = branch_group.drop(branch, axis=1)
                 s_tot = branch_group['count'].sum()
                 gain = gain_calc(branch_group, goal, ent, s_tot, False)
                 if gain >= max_gain:
                     new_branch = name
                     max_gain = gain
             if len(conditions) != 0:
-                conditions.remove(str(new_branch))
-                next_branch = tree_builder(examples, conditions, new_branch, goal)
+                examples = examples.astype({str(branch): 'string'})
+                new_examples = examples[examples[branch].str.contains(str(column)) == True]
+                new_examples = new_examples.drop(branch,axis=1)
+                conditions.remove(new_branch)
+                next_branch = tree_builder(new_examples, conditions, new_branch, goal)
                 my_tree.children[column] = next_branch
     return my_tree
 
 
 # Begin ID3 algorithm
-def id3(examples, goal, conditions):
-    target_data = examples[str(goal)].value_counts().to_frame(name='count').reset_index()
-    target_data = target_data.pivot_table(index=str(goal), columns=target_data.columns[0], values='count').fillna(0)
+def id3(examples, goal, attributes):
+    conditions = attributes
+    target_data = examples[goal].value_counts().to_frame(name='count').reset_index()
+    target_data = target_data.pivot_table(index=goal, columns=target_data.columns[0], values='count').fillna(0)
     n = target_data.iloc[0, 0]
     y = target_data.iloc[1, 0]
     # Calculate sample entropy
@@ -142,7 +148,7 @@ def id3(examples, goal, conditions):
     best_attribute = ''
     high_gain = 0
     for name in conditions:
-        list_branch = examples.groupby([str(name)])[str(goal)]
+        list_branch = examples.groupby([name])[goal]
         gain = gain_calc(list_branch, goal, sample_ent, examples.shape[0], True)
         if gain > high_gain:
             best_attribute = name
@@ -151,7 +157,6 @@ def id3(examples, goal, conditions):
     # Establish root of tree with the highest IG
     my_tree = tree_builder(examples, conditions, best_attribute, goal)
     return my_tree
-
 
 ####################   MAIN PROGRAM ######################
 
