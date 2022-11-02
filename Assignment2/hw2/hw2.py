@@ -46,6 +46,8 @@ def funTree():
 
 
 # Calculates entropy from yes/no counts
+# y is yes count
+# n is no count
 def entropy(y, n):
     s = n + y
     if y == 0:
@@ -60,53 +62,41 @@ def entropy(y, n):
     return ent
 
 
+# Calculate information Gain
 # group is examples to calculate gain from
 # target is target attribute
 # ent_prior is branch entropy
 # s_tot is sample size of group
-# flag is a boolean value to tell program if it's calculating entire sample or branch sample
-def gain_calc(group, goal, ent_prior, s_tot, flag):
-    counts = group
-    if flag:  # Information gain of attribute from total example sample
-        counts = counts.value_counts().to_frame(name='count').reset_index()
-        counts = counts.pivot_table(index=goal, columns=counts.columns[0], values='count').fillna(0)
-        ent = 0
-        for column in counts:
-            n = counts[column].values[0]
-            y = counts[column].values[1]
-            s = y + n
-            ent_branch = s / s_tot * entropy(y, n)
-            ent = ent + ent_branch
-
-        gain = ent_prior - ent
-    else:  # Information gain of attribute from branch condition
-        counts = counts.pivot_table(index=goal, columns=counts.columns[0], values='count').fillna(0)
-        ent = 0
-        ent_branch = 0
-        for column in counts:
-            n = counts[column].values[0]
-            y = counts[column].values[1]
-            s = y + n
-            ent_branch = s / s_tot * entropy(y, n)
-            ent = ent + ent_branch
-        gain = ent_prior - ent
+def gain_calc(group, goal, ent_prior, s_tot):
+    counts = group.pivot_table(index=goal, columns=group.columns[0], values='count').fillna(0)
+    ent = 0
+    for column in counts:
+        n = counts[column].values[0]
+        y = counts[column].values[1]
+        s = y + n
+        ent_branch = s / s_tot * entropy(y, n)
+        ent = ent + ent_branch
+    gain = ent_prior - ent
     return gain
 
 
-def tree_builder(examples, attributes, branch, goal):
-    conditions = attributes
+# Continue to create each branch
+# examples is the data to train tree off of
+# my_attributes is the list of attributes to choose from for each branch
+# ent_prior is the entropy of the parent branch
+# goal is the decision for each example
+def tree_builder(examples, my_attributes, branch, goal):
     my_tree = DecisionNode(branch)
     branch_bool = examples.groupby([branch])[goal].value_counts().to_frame(name='count').reset_index()
     branch_bool = branch_bool.pivot_table(index=goal, columns=branch_bool.columns[0], values='count').fillna(0)
-    yes_no=branch_bool.axes[0].tolist() # Get yes/no values
+    yes_no = branch_bool.axes[0].tolist()  # Get yes/no values
     # Calculate branch entropy then calculate max gain to determine next branch
     new_branch = ''
     for column in branch_bool:  # Determine next branch
         n = branch_bool[column].values[0]
         y = branch_bool[column].values[1]
         ent = entropy(y, n)
-        if ent == 0 or len(conditions) == 0:  # Makes a decision
-            leaf = ''
+        if ent == 0 or len(my_attributes) == 0:  # Makes a decision
             if y > n:
                 leaf = yes_no[1]
             else:
@@ -114,30 +104,30 @@ def tree_builder(examples, attributes, branch, goal):
             my_tree.children[column] = DecisionNode(leaf)
         else:  # Needs more info
             max_gain = 0
-            for name in conditions:
+            for name in my_attributes:
                 branch_group = examples.groupby([branch, name])[goal].value_counts().to_frame(
                     name='count').reset_index()
                 branch_group = branch_group.astype({branch: 'string'})
-                branch_group = branch_group[branch_group[branch].str.contains(str(column)) == True]
-                branch_group = branch_group.drop(branch, axis=1)
+                branch_group = branch_group[branch_group[branch].str.contains(str(column))].drop(branch, axis=1)
                 s_tot = branch_group['count'].sum()
-                gain = gain_calc(branch_group, goal, ent, s_tot, False)
+                gain = gain_calc(branch_group, goal, ent, s_tot)
                 if gain >= max_gain:
                     new_branch = name
                     max_gain = gain
-            if len(conditions) != 0:
+            if len(my_attributes) != 0:  # More branches to build
                 examples = examples.astype({str(branch): 'string'})
-                new_examples = examples[examples[branch].str.contains(str(column)) == True]
-                new_examples = new_examples.drop(branch,axis=1)
-                conditions.remove(new_branch)
-                next_branch = tree_builder(new_examples, conditions, new_branch, goal)
+                new_examples = examples[examples[branch].str.contains(str(column))].drop(branch, axis=1)
+                my_attributes.remove(new_branch)
+                next_branch = tree_builder(new_examples, my_attributes, new_branch, goal)
                 my_tree.children[column] = next_branch
     return my_tree
 
 
 # Begin ID3 algorithm
-def id3(examples, goal, attributes):
-    conditions = attributes
+# examples is the data to train tree off of
+# my_attributes is the list of attributes to choose from for each branch
+# goal is the decision for each example
+def id3(examples, goal, my_attributes):
     target_data = examples[goal].value_counts().to_frame(name='count').reset_index()
     target_data = target_data.pivot_table(index=goal, columns=target_data.columns[0], values='count').fillna(0)
     n = target_data.iloc[0, 0]
@@ -147,16 +137,17 @@ def id3(examples, goal, attributes):
     # Determine the highest information gain (IG)
     best_attribute = ''
     high_gain = 0
-    for name in conditions:
-        list_branch = examples.groupby([name])[goal]
-        gain = gain_calc(list_branch, goal, sample_ent, examples.shape[0], True)
+    for name in my_attributes:
+        list_branch = examples.groupby([name])[goal].value_counts().to_frame(name='count').reset_index()
+        gain = gain_calc(list_branch, goal, sample_ent, examples.shape[0])
         if gain > high_gain:
             best_attribute = name
             high_gain = gain
-    conditions.remove(best_attribute)
+    my_attributes.remove(best_attribute)
     # Establish root of tree with the highest IG
-    my_tree = tree_builder(examples, conditions, best_attribute, goal)
+    my_tree = tree_builder(examples, my_attributes, best_attribute, goal)
     return my_tree
+
 
 ####################   MAIN PROGRAM ######################
 
@@ -168,13 +159,13 @@ attributes = train.columns.tolist()
 attributes.remove(target)
 
 # Learning and visualizing the tree
-tree = id3(train,target,attributes)
+tree = id3(train, target, attributes)
 tree.display()
 print(tree)
 
 # Evaluating the tree on the test data
 correct = 0
-for i in range(0,len(test)):
-    if str(tree.predicts(test.loc[i])) == str(test.loc[i,target]):
+for i in range(0, len(test)):
+    if str(tree.predicts(test.loc[i])) == str(test.loc[i, target]):
         correct += 1
-print("\nThe accuracy is: ", correct/len(test))
+print("\nThe accuracy is: ", correct / len(test))
